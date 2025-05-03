@@ -1,4 +1,5 @@
 require('dotenv').config();
+
 const {
   Client,
   GatewayIntentBits,
@@ -13,15 +14,70 @@ const {
   EmbedBuilder
 } = require('discord.js');
 const axios = require('axios');
-const express = require('express');
+const { Octokit } = require('@octokit/rest');
 
+// GitHub setup
+const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
+
+// Function to save invoice to GitHub
+async function saveInvoiceToGitHub(invoiceData) {
+  try {
+    const owner = process.env.REPO_OWNER || 'n3ce';
+    const repo = process.env.REPO_NAME || 'n2ce';
+    const path = 'invoice.json';
+
+    // Get current file SHA
+    let sha;
+    try {
+      const { data } = await octokit.repos.getContent({ owner, repo, path });
+      sha = data.sha;
+      const currentContent = Buffer.from(data.content, 'base64').toString();
+      const invoices = JSON.parse(currentContent);
+      invoices.push(invoiceData);
+      invoiceData = invoices;
+    } catch {
+      // File does not exist, start fresh
+    }
+
+    await octokit.repos.createOrUpdateFileContents({
+      owner,
+      repo,
+      path,
+      message: '🧾 Add new invoice',
+      content: Buffer.from(JSON.stringify(invoiceData, null, 2)).toString('base64'),
+      sha,
+    });
+
+    console.log('✅ Invoice saved to GitHub.');
+  } catch (error) {
+    console.error('❌ Error saving invoice to GitHub:', error);
+  }
+}
+
+// Discord client setup
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],
   partials: [Partials.Channel],
 });
 
-client.once('ready', () => {
+client.once('ready', async () => {
   console.log(`Logged in as ${client.user.tag}`);
+
+  const channel = await client.channels.fetch(process.env.CHANNEL_ID);
+  const embed = new EmbedBuilder()
+    .setTitle('🧾 Invoice Verification')
+    .setDescription('Click the button below to verify your purchase and receive your role automatically.')
+    .setColor(0x00AEFF)
+    .setFooter({ text: 'n2ce.mysellauth.com' });
+
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('verify_invoice')
+      .setLabel('🧾 Verify Invoice')
+      .setStyle(ButtonStyle.Primary)
+  );
+
+  await channel.send({ embeds: [embed], components: [row] });
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
@@ -47,9 +103,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const invoice = interaction.fields.getTextInputValue('invoice_code');
 
     try {
-      const response = await axios.get(`https://sellauth.com/api/invoices/${invoice}`, {
-        headers: { Authorization: `Bearer ${process.env.SELLAUTH_API_KEY}` },
-      });
+      const response = await axios.get(
+        `https://sellauth.com/api/invoices/${invoice}`,
+        { headers: { Authorization: `Bearer ${process.env.SELLAUTH_API_KEY}` } }
+      );
 
       const isValid = response.data.valid;
 
@@ -58,37 +115,27 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const member = interaction.member;
 
         await member.roles.add(role);
-        await interaction.reply({ content: `✅ Invoice verified! Role assigned.`, ephemeral: true });
+        await interaction.reply({ content: '✅ Invoice verified! Role assigned.', ephemeral: true });
+
+        // Send success log embed
+        const successEmbed = new EmbedBuilder()
+          .setTitle('✅ Invoice Verified')
+          .setDescription(`Invoice ID: \`${invoice}\`\nUser: <@${interaction.user.id}>\`)
+          .setColor(0x00ff00)
+          .setTimestamp();
+        const logChannel = await client.channels.fetch(process.env.CHANNEL_ID);
+        await logChannel.send({ embeds: [successEmbed] });
+
+        // Save to GitHub
+        await saveInvoiceToGitHub({ invoiceNumber: invoice, verified: true, userId: interaction.user.id, timestamp: new Date().toISOString() });
       } else {
-        await interaction.reply({ content: `❌ Invalid invoice.`, ephemeral: true });
+        await interaction.reply({ content: '❌ Invalid invoice.', ephemeral: true });
       }
     } catch (error) {
       console.error(error);
-      await interaction.reply({ content: `❌ Error checking invoice.`, ephemeral: true });
+      await interaction.reply({ content: '❌ Error checking invoice.', ephemeral: true });
     }
   }
-});
-
-client.on('ready', async () => {
-  const channel = await client.channels.fetch(process.env.CHANNEL_ID);
-
-  const embed = new EmbedBuilder()
-    .setTitle('🧾 Invoice Verification')
-    .setDescription('Click the button below to verify your purchase and receive your role automatically.')
-    .setColor(0x00AEFF)
-    .setFooter({ text: 'n2ce.mysellauth.com' });
-
-  const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId('verify_invoice')
-      .setLabel('🧾 Verify Invoice')
-      .setStyle(ButtonStyle.Primary)
-  );
-
-  await channel.send({
-    embeds: [embed],
-    components: [row],
-  });
 });
 
 client.login(process.env.DISCORD_TOKEN);
