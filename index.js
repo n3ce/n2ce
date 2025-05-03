@@ -1,5 +1,9 @@
 require('dotenv').config();
 
+const express = require('express');
+const app = express();
+app.use(express.json());
+
 const {
   Client,
   GatewayIntentBits,
@@ -33,7 +37,7 @@ async function saveInvoiceToGitHub(invoiceData) {
       const currentContent = Buffer.from(data.content, 'base64').toString();
       invoices = JSON.parse(currentContent);
     } catch {
-      // Arquivo ainda não existe, criar novo
+      // Arquivo ainda não existe
     }
 
     invoices.push(invoiceData);
@@ -53,14 +57,39 @@ async function saveInvoiceToGitHub(invoiceData) {
   }
 }
 
-// Discord client setup
+// ─── Express Webhook Route ──────────────────────────────────────────────
+app.post('/webhook', async (req, res) => {
+  const data = req.body;
+
+  if (data.status === 'completed') {
+    const invoiceData = {
+      invoiceNumber: data.invoice_id || data.id,
+      verified: true,
+      userEmail: data.email || 'unknown',
+      product: data.product_name || 'unknown',
+      timestamp: new Date().toISOString(),
+    };
+
+    await saveInvoiceToGitHub(invoiceData);
+    console.log('✅ Invoice recebido via webhook e salvo.');
+  }
+
+  res.sendStatus(200);
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`✅ Webhook listening on port ${PORT}`);
+});
+
+// ─── Discord Bot ─────────────────────────────────────────────────────────
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],
   partials: [Partials.Channel],
 });
 
 client.once('ready', async () => {
-  console.log(`Logged in as ${client.user.tag}`);
+  console.log(`🤖 Logged in as ${client.user.tag}`);
 
   const channel = await client.channels.fetch(process.env.CHANNEL_ID);
   const embed = new EmbedBuilder()
