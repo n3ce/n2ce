@@ -26,25 +26,28 @@ async function saveInvoiceToGitHub(invoiceData) {
     const repo = process.env.REPO_NAME || 'n2ce';
     const path = 'invoice.json';
 
-    // Get current file SHA
+    // Get current file SHA and content
     let sha;
+    let invoices = [];
     try {
       const { data } = await octokit.repos.getContent({ owner, repo, path });
       sha = data.sha;
       const currentContent = Buffer.from(data.content, 'base64').toString();
-      const invoices = JSON.parse(currentContent);
-      invoices.push(invoiceData);
-      invoiceData = invoices;
+      invoices = JSON.parse(currentContent);
     } catch {
       // File does not exist, start fresh
     }
 
+    // Add new invoice data to array
+    invoices.push(invoiceData);
+
+    // Update or create file on GitHub
     await octokit.repos.createOrUpdateFileContents({
       owner,
       repo,
       path,
       message: '🧾 Add new invoice',
-      content: Buffer.from(JSON.stringify(invoiceData, null, 2)).toString('base64'),
+      content: Buffer.from(JSON.stringify(invoices, null, 2)).toString('base64'),
       sha,
     });
 
@@ -97,6 +100,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     modal.addComponents(firstRow);
 
     await interaction.showModal(modal);
+    return;
   }
 
   if (interaction.isModalSubmit() && interaction.customId === 'invoice_modal') {
@@ -120,14 +124,19 @@ client.on(Events.InteractionCreate, async (interaction) => {
         // Send success log embed
         const successEmbed = new EmbedBuilder()
           .setTitle('✅ Invoice Verified')
-          .setDescription(`Invoice ID: \`${invoice}\`\nUser: <@${interaction.user.id}>\`)
+          .setDescription(`Invoice ID: \`${invoice}\`\nUser: <@${interaction.user.id}>'`)
           .setColor(0x00ff00)
           .setTimestamp();
         const logChannel = await client.channels.fetch(process.env.CHANNEL_ID);
         await logChannel.send({ embeds: [successEmbed] });
 
         // Save to GitHub
-        await saveInvoiceToGitHub({ invoiceNumber: invoice, verified: true, userId: interaction.user.id, timestamp: new Date().toISOString() });
+        await saveInvoiceToGitHub({
+          invoiceNumber: invoice,
+          verified: true,
+          userId: interaction.user.id,
+          timestamp: new Date().toISOString(),
+        });
       } else {
         await interaction.reply({ content: '❌ Invalid invoice.', ephemeral: true });
       }
