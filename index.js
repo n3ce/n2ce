@@ -14,19 +14,17 @@ const {
   EmbedBuilder
 } = require('discord.js');
 const axios = require('axios');
-const { Octokit } = require('@octokit/rest');
 
-// GitHub setup
-const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
-
-// Function to save invoice to GitHub
+// Função para salvar invoice no GitHub
 async function saveInvoiceToGitHub(invoiceData) {
   try {
+    const { Octokit } = await import('@octokit/rest');
+    const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
+
     const owner = process.env.REPO_OWNER || 'n3ce';
     const repo = process.env.REPO_NAME || 'n2ce';
     const path = 'invoice.json';
 
-    // Get current file SHA and content
     let sha;
     let invoices = [];
     try {
@@ -35,13 +33,11 @@ async function saveInvoiceToGitHub(invoiceData) {
       const currentContent = Buffer.from(data.content, 'base64').toString();
       invoices = JSON.parse(currentContent);
     } catch {
-      // File does not exist, start fresh
+      // Arquivo ainda não existe, criar novo
     }
 
-    // Add new invoice data to array
     invoices.push(invoiceData);
 
-    // Update or create file on GitHub
     await octokit.repos.createOrUpdateFileContents({
       owner,
       repo,
@@ -121,16 +117,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
         await member.roles.add(role);
         await interaction.reply({ content: '✅ Invoice verified! Role assigned.', ephemeral: true });
 
-        // Send success log embed
         const successEmbed = new EmbedBuilder()
           .setTitle('✅ Invoice Verified')
-          .setDescription(`Invoice ID: \`${invoice}\`\nUser: <@${interaction.user.id}>'`)
+          .setDescription(`Invoice ID: \`${invoice}\`\nUser: <@${interaction.user.id}>`)
           .setColor(0x00ff00)
           .setTimestamp();
+
         const logChannel = await client.channels.fetch(process.env.CHANNEL_ID);
         await logChannel.send({ embeds: [successEmbed] });
 
-        // Save to GitHub
         await saveInvoiceToGitHub({
           invoiceNumber: invoice,
           verified: true,
