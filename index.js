@@ -1,40 +1,94 @@
+require('dotenv').config();
 const {
   Client,
   GatewayIntentBits,
   Partials,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
+  Events,
   EmbedBuilder
 } = require('discord.js');
+const axios = require('axios');
+const express = require('express');
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],
   partials: [Partials.Channel],
 });
 
-// ⚠️ Replace this with a secure method or environment variable
-const DISCORD_TOKEN = 'MTM2NDk0NDgwNzA4NDE2MzE4Mw.GxN1l1.Kfjz8hvx5X3xQDRWJE85OWI2oZpUiUSLb1pr90';
+client.once('ready', () => {
+  console.log(`Logged in as ${client.user.tag}`);
+});
 
-// Channel ID where the embed will be sent
-const INSTALL_CHANNEL_ID = '1365011390871371890';
+client.on(Events.InteractionCreate, async (interaction) => {
+  if (interaction.isChatInputCommand()) return;
 
-client.once('ready', async () => {
-  console.log(`✅ Logged in as ${client.user.tag}`);
+  if (interaction.isButton() && interaction.customId === 'verify_invoice') {
+    const modal = new ModalBuilder()
+      .setCustomId('invoice_modal')
+      .setTitle('Enter your Invoice');
 
-  try {
-    const installChannel = await client.channels.fetch(INSTALL_CHANNEL_ID);
+    const invoiceInput = new TextInputBuilder()
+      .setCustomId('invoice_code')
+      .setLabel('Invoice Number')
+      .setStyle(TextInputStyle.Short);
 
-    const installEmbed = new EmbedBuilder()
-      .setTitle('💸 Want to pay with Robux or Pix?')
-      .setColor(0x1e3a8a)
-      .setDescription(`
-Open a ticket and our team will help you complete your payment via Robux/Pix.
-      `)
-      .setFooter({ text: 'n2ce.mysellauth.com' });
+    const firstRow = new ActionRowBuilder().addComponents(invoiceInput);
+    modal.addComponents(firstRow);
 
-    await installChannel.send({ embeds: [installEmbed] });
-    console.log('📨 Embed sent successfully!');
-  } catch (error) {
-    console.error('❌ Error sending embed:', error);
+    await interaction.showModal(modal);
+  }
+
+  if (interaction.isModalSubmit() && interaction.customId === 'invoice_modal') {
+    const invoice = interaction.fields.getTextInputValue('invoice_code');
+
+    try {
+      const response = await axios.get(`https://sellauth.com/api/invoices/${invoice}`, {
+        headers: { Authorization: `Bearer ${process.env.SELLAUTH_API_KEY}` },
+      });
+
+      const isValid = response.data.valid;
+
+      if (isValid) {
+        const role = interaction.guild.roles.cache.get(process.env.ROLE_ID);
+        const member = interaction.member;
+
+        await member.roles.add(role);
+        await interaction.reply({ content: `✅ Invoice verified! Role assigned.`, ephemeral: true });
+      } else {
+        await interaction.reply({ content: `❌ Invalid invoice.`, ephemeral: true });
+      }
+    } catch (error) {
+      console.error(error);
+      await interaction.reply({ content: `❌ Error checking invoice.`, ephemeral: true });
+    }
   }
 });
 
-client.login(DISCORD_TOKEN);
+client.on('ready', async () => {
+  const channel = await client.channels.fetch(process.env.CHANNEL_ID);
+
+  const embed = new EmbedBuilder()
+    .setTitle('🧾 Invoice Verification')
+    .setDescription('Click the button below to verify your purchase and receive your role automatically.')
+    .setColor(0x00AEFF)
+    .setFooter({ text: 'n2ce.mysellauth.com' });
+
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('verify_invoice')
+      .setLabel('🧾 Verify Invoice')
+      .setStyle(ButtonStyle.Primary)
+  );
+
+  await channel.send({
+    embeds: [embed],
+    components: [row],
+  });
+});
+
+client.login(process.env.DISCORD_TOKEN);
